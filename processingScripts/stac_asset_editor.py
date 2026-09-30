@@ -10,12 +10,15 @@ Das GUI dazu: GUI_stac_assetDescription_editor.py (im Hauptverzeichnis)
 """
 
 import logging
+import re
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 
 from configuration import (
+    ACQUISITION_TIME_FIELD,
     DEFAULT_ENVIRONMENT,
     DESCRIPTION_FIELDS,
     DESCRIPTION_SEPARATOR,
@@ -35,6 +38,12 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 SECRETS_DIR = PROJECT_DIR / "secrets"
 proxy_handler.PROXY_CONFIG_PATH = SECRETS_DIR / "proxy_config.json"
 
+# Die Item-ID endet mit dem Aufnahmezeitpunkt YYYY-MM-DDthhmmsscc (cc = Hundertstel-
+# sekunden), z.B. ram-2022-07-16t10080000. Die Zeit ist UTC wie das Item-datetime.
+ITEM_TIME_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2})t(\d{2})(\d{2})(\d{2})(\d{2})$", re.IGNORECASE)
+# Anzeige in Vorschau und Log, solange die Acquisition time noch nicht bekannt ist
+ACQUISITION_TIME_PLACEHOLDER = "<aus Item-ID>"
+
 
 def build_description(values: dict) -> str:
     """
@@ -52,6 +61,31 @@ def build_description(values: dict) -> str:
         if value:
             parts.append(f"{name}: {value}")
     return DESCRIPTION_SEPARATOR.join(parts)
+
+
+def acquisition_time_from_item(item: str) -> str:
+    """
+    Liest die Acquisition time (UTC) aus der Item-ID.
+
+    Beispiel: "ram-2022-07-16t10080000" -> "2022-07-16T10:08:00.00"
+
+    Raises:
+        ValueError: Wenn die Item-ID keinen gültigen Zeitpunkt enthält
+    """
+    match = ITEM_TIME_PATTERN.search(item)
+    if match:
+        date, hh, mm, ss, cc = match.groups()
+        try:
+            # Nur zur Prüfung, ob Datum und Uhrzeit gültig sind (z.B. kein 25:61)
+            datetime.strptime(f"{date} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S")
+            return f"{date}T{hh}:{mm}:{ss}.{cc}"
+        except ValueError:
+            pass
+    raise ValueError(
+        f"Acquisition time kann nicht aus der Item-ID '{item}' gelesen werden. "
+        f"Erwartet wird eine Item-ID, die auf YYYY-MM-DDthhmmsscc endet "
+        f"(z.B. ram-2022-07-16t10080000)."
+    )
 
 
 def read_hrefs(text: str) -> list:
@@ -109,9 +143,12 @@ def get_asset_api_url(environment: str, collection: str, item: str, asset: str) 
     )
 
 
-def update_one_asset(session, href, description, environment, overwrite, dry_run, auth) -> tuple:
+def update_one_asset(session, href, values, environment, overwrite, dry_run, auth) -> tuple:
     """
     Prüft ein Asset und schreibt die Description (ausser bei dry_run).
+
+    Die Description wird pro Asset gebildet, weil die Acquisition time aus der
+    Item-ID stammt; alle übrigen Attribute sind für alle Assets gleich.
 
     Returns:
         tuple: (status, meldung) mit status = "SUCCESS" | "WARNING" | "ERROR"
@@ -122,6 +159,9 @@ def update_one_asset(session, href, description, environment, overwrite, dry_run
         requests.RequestException: Netzwerkfehler
     """
     collection, item, asset = parse_asset_href(href, environment)
+    values = dict(values)
+    values[ACQUISITION_TIME_FIELD] = acquisition_time_from_item(item)
+    description = build_description(values)
     url = get_asset_api_url(environment, collection, item, asset)
 
     # Aktuellen Stand lesen: existiert das Asset, hat es schon eine Description?
@@ -136,13 +176,13 @@ def update_one_asset(session, href, description, environment, overwrite, dry_run
         return "ERROR", "Unerwartete Antwort vom Server (kein JSON). Verbindung/Proxy prüfen."
 
     if existing == description:
-        return "SUCCESS", "Description ist bereits identisch vorhanden, nichts zu ändern."
+        return "SUCCESS", f"Description ist bereits identisch vorhanden, nichts zu ändern: {description}"
     if existing and not overwrite:
         return "WARNING", f"Übersprungen, Asset hat bereits eine Description: {existing}"
 
     action = "überschrieben" if existing else "ergänzt"
     if dry_run:
-        return "SUCCESS", f"Prüfung OK, Description würde {action}."
+        return "SUCCESS", f"Prüfung OK, Description würde {action}: {description}"
 
     # PATCH ändert nur das gesendete Feld. Kein PUT verwenden: PUT löscht alle
     # optionalen Felder, die nicht im Payload stehen.
@@ -165,22 +205,25 @@ def update_one_asset(session, href, description, environment, overwrite, dry_run
     if written != description:
         return "ERROR", "Server hat die Description nicht wie gesendet übernommen. Asset im STAC prüfen."
 
-    return "SUCCESS", f"Description {action}."
+    return "SUCCESS", f"Description {action}: {description}"
 
 
 def update_asset_descriptions(
     hrefs: list,
-    description: str,
+    values: dict,
     environment: str = DEFAULT_ENVIRONMENT,
     overwrite: bool = False,
     dry_run: bool = True
 ) -> dict:
     """
-    Schreibt dieselbe Description in alle angegebenen Assets.
+    Schreibt die Description in alle angegebenen Assets.
+
+    Alle Assets erhalten dieselben Attribute, nur die Acquisition time wird
+    pro Asset aus der Item-ID gelesen.
 
     Args:
         hrefs (list): Asset-hrefs (https://<host>/<collection>/<item>/<asset>)
-        description (str): Text der Description
+        values (dict): Attributname -> Text (Namen wie in DESCRIPTION_FIELDS)
         environment (str): "INT" oder "PROD" (default: "INT")
         overwrite (bool): Bestehende Descriptions überschreiben (default: False)
         dry_run (bool): Nur prüfen, nichts schreiben (default: True)
@@ -196,7 +239,7 @@ def update_asset_descriptions(
         raise ValueError(f"Unbekannte Umgebung '{environment}'. Erlaubt: {list(STAC_HOSTNAMES)}")
     if not hrefs:
         raise ValueError("Keine Asset-hrefs angegeben.")
-    if not description:
+    if not build_description(values):
         raise ValueError("Die Description ist leer. Mindestens ein Attribut ausfüllen.")
 
     proxy_handler.initialize_proxy()
@@ -214,7 +257,9 @@ def update_asset_descriptions(
     mode = "PRÜFUNG (es wird nichts geschrieben)" if dry_run else "SCHREIBEN"
     logger.info("=" * 70)
     logger.info(f"{mode} | Umgebung {environment} ({STAC_HOSTNAMES[environment]}) | {total} Asset(s)")
-    logger.info(f"Description: {description}")
+    template = dict(values)
+    template[ACQUISITION_TIME_FIELD] = ACQUISITION_TIME_PLACEHOLDER
+    logger.info(f"Description: {build_description(template)}")
     logger.info("=" * 70)
 
     counts = {"SUCCESS": 0, "WARNING": 0, "ERROR": 0}
@@ -223,7 +268,7 @@ def update_asset_descriptions(
         aborted = False
         try:
             status, message = update_one_asset(
-                session, href, description, environment, overwrite, dry_run, auth
+                session, href, values, environment, overwrite, dry_run, auth
             )
         except ValueError as e:
             status, message = "ERROR", str(e)

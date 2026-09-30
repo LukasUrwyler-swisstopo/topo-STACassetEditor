@@ -29,9 +29,14 @@ Voraussetzung: `secrets/stac_credentials.json` (Format wie in topo-rapidmapping,
 
 1. **Umgebung** wählen (INT ist Standard). Die hrefs müssen zur gewählten Umgebung gehören.
 2. **Asset-hrefs** eingeben, eine URL pro Zeile, oder über «Aus TXT-Datei laden...» einlesen.
-   Alle aufgeführten Assets erhalten dieselbe Description.
-3. **Attribute** ausfüllen. Leere Felder erscheinen nicht in der Description. Die Vorschau zeigt
-   den Text genau so, wie er geschrieben wird.
+   Alle aufgeführten Assets erhalten dieselben Attribute, nur die **Acquisition time** wird pro
+   Asset aus der Item-ID gelesen (UTC): `ram-2022-07-16t10080000` → `2022-07-16T10:08:00.00`.
+   Passt eine Item-ID nicht zu diesem Muster, endet das Asset mit ERROR.
+3. **Attribute** ausfüllen. Leere Felder erscheinen nicht in der Description.
+   SourceReferenceSystem ist mit `(EPSG:2056) CH1903+ / LV95_LN02` vorbelegt. Mehrere LineIDs
+   mit `, ` trennen. Ein **RapidMapping Event** wird dem Commentary vorangestellt, z.B.
+   `Commentary: RapidMapping Trockenheit Wallis 2026, Quick Digital OrthoPhoto - RGB 8BIT - rapidData`.
+   Die Vorschau zeigt den Text genau so, wie ihn das erste Asset erhält.
 4. **Prüfen (nichts schreiben)**: zeigt pro Asset, was geschehen würde. Braucht kein Login.
 5. **Description schreiben**: schreibt nach Rückfrage.
 

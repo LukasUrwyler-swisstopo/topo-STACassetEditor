@@ -7,7 +7,8 @@ Rules for Claude Code in this repository: swisstopo STAC Asset Editor.
 The tool adds a missing `description` to existing STAC assets (collection
 `ch.swisstopo.spezialbefliegungen` and similar). The user enters asset hrefs (single, or a TXT
 file with one href per line) and fills one input field per description attribute; all listed
-assets receive the same description.
+assets receive the same attributes, except `Acquisition time`, which is read per asset from its
+item ID (`ram-2022-07-16t10080000` -> `2022-07-16T10:08:00.00`, UTC, no conversion).
 
 Users are geospatial specialists, not professional programmers. Maintainability and readability
 take priority over elegance. Sister project: `../topo-rapidmapping` (publishes assets to the same
@@ -82,8 +83,9 @@ reached by the ttk style and must be coloured in `_apply_theme`. Use `ttk.Scroll
 - Field names differ per API version: v0.9 `eo:gsd` / `checksum:multihash`, v1 `gsd` / `file:checksum`.
   `description` is the same in both.
 - Description format: `Name: value` pairs joined by `", "`, in this order: Area, TerrainModel,
-  SourceReferenceSystem, CameraSystem, Acquisition time, LineId, Commentary. Multiple values
-  inside one attribute are comma-separated without a space. Empty attributes are omitted.
+  SourceReferenceSystem, CameraSystem, Acquisition time, LineID, Commentary. Multiple LineIDs
+  are separated by `", "`. An optional "RapidMapping Event" is prefixed to Commentary,
+  separated by `", "`. Empty attributes are omitted.
 
 ## Critical domain logic (do not change without reason)
 

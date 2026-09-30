@@ -103,10 +103,20 @@ def ensure_requirements():
 
 ensure_requirements()
 
-from configuration import DEFAULT_ENVIRONMENT, DESCRIPTION_FIELDS, STAC_HOSTNAMES
+from configuration import (
+    ACQUISITION_TIME_FIELD,
+    DEFAULT_ENVIRONMENT,
+    DESCRIPTION_FIELDS,
+    DESCRIPTION_SEPARATOR,
+    FIELD_DEFAULTS,
+    STAC_HOSTNAMES,
+)
 from stac_asset_editor import (
+    ACQUISITION_TIME_PLACEHOLDER,
     PROJECT_DIR,
+    acquisition_time_from_item,
     build_description,
+    parse_asset_href,
     read_hrefs,
     update_asset_descriptions,
 )
@@ -182,7 +192,11 @@ class AssetEditorApp(tk.Tk):
         self.log_queue    = queue.Queue()
         self.environment  = tk.StringVar(value=DEFAULT_ENVIRONMENT)
         self.overwrite    = tk.BooleanVar(value=False)
-        self.field_vars   = {name: tk.StringVar() for name, _ in DESCRIPTION_FIELDS}
+        # Acquisition time hat kein Eingabefeld, sie kommt pro Asset aus der Item-ID
+        self.field_vars   = {name: tk.StringVar(value=FIELD_DEFAULTS.get(name, ""))
+                             for name, _ in DESCRIPTION_FIELDS
+                             if name != ACQUISITION_TIME_FIELD}
+        self.event_var    = tk.StringVar()
 
         self._build_ui()
         self._update_preview()
@@ -251,23 +265,44 @@ class AssetEditorApp(tk.Tk):
                              style="Section.TLabelframe")
         sec.pack(fill="x", padx=12, pady=(8, 0))
         sec.columnconfigure(1, weight=1)
-        for r, (name, suggestions) in enumerate(DESCRIPTION_FIELDS):
-            ttk.Label(sec, text=name + ":", font=("Segoe UI", 9, "bold")
-                      ).grid(row=r, column=0, sticky="w", pady=3)
-            if suggestions:
+        row = 0
+        for name, suggestions in DESCRIPTION_FIELDS:
+            if name == "Commentary":
+                # RapidMapping Event wird im Commentary vor die Auswahl gesetzt (siehe _values)
+                row = self._add_field_row(sec, row, "RapidMapping Event",
+                                          ttk.Entry(sec, textvariable=self.event_var),
+                                          "wird dem Commentary vorangestellt, z.B. "
+                                          "RapidMapping Trockenheit Wallis 2026")
+                self.event_var.trace_add("write", self._update_preview)
+            if name == ACQUISITION_TIME_FIELD:
+                widget = ttk.Label(sec, font=("Segoe UI", 8, "italic"),
+                                   text="wird pro Asset aus der Item-ID gelesen (UTC), z.B. "
+                                        "ram-2022-07-16t10080000 → 2022-07-16T10:08:00.00")
+                self._dim_labels.append(widget)
+            elif name == "Commentary":
+                # Nur Auswahl aus der Liste; leerer Eintrag zuoberst zum Abwählen
+                widget = ttk.Combobox(sec, textvariable=self.field_vars[name],
+                                      values=[""] + suggestions, state="readonly")
+                self._comboboxes.append(widget)
+            elif suggestions:
                 widget = ttk.Combobox(sec, textvariable=self.field_vars[name], values=suggestions)
                 self._comboboxes.append(widget)
             else:
                 widget = ttk.Entry(sec, textvariable=self.field_vars[name])
-            widget.grid(row=r, column=1, sticky="ew", padx=(8, 0), pady=3)
-            self.field_vars[name].trace_add("write", self._update_preview)
+            hint = ""
+            if name == "LineID":
+                hint = "mehrere LineIDs mit Komma und Leerzeichen trennen, z.B. 12345, 12346"
+            row = self._add_field_row(sec, row, name, widget, hint)
+            if name in self.field_vars:
+                self.field_vars[name].trace_add("write", self._update_preview)
         field_hint = ttk.Label(sec, text="leere Felder erscheinen nicht in der Description",
                                font=("", 8))
-        field_hint.grid(row=len(DESCRIPTION_FIELDS), column=1, sticky="w", padx=(8, 0))
+        field_hint.grid(row=row, column=1, sticky="w", padx=(8, 0))
         self._dim_labels.append(field_hint)
 
         # Vorschau
-        preview_frame = ttk.LabelFrame(self, text="Vorschau der Description", padding=8,
+        preview_frame = ttk.LabelFrame(self, text="Vorschau der Description (erstes Asset)",
+                                       padding=8,
                                        style="Section.TLabelframe")
         preview_frame.pack(fill="x", padx=12, pady=(8, 0))
         self.preview_text = tk.Text(preview_frame, height=3, wrap="word", state="disabled",
@@ -308,6 +343,20 @@ class AssetEditorApp(tk.Tk):
         self.log_box.pack(side="left", fill="both", expand=True)
         for tag, color in LOG_COLORS.items():
             self.log_box.tag_configure(tag, foreground=color)
+
+    def _add_field_row(self, sec, row, name, widget, hint=""):
+        """Setzt Beschriftung, Eingabe und optionalen Hinweis (grau) ins Raster.
+        Gibt die nächste freie Zeile zurück."""
+        ttk.Label(sec, text=name + ":", font=("Segoe UI", 9, "bold")
+                  ).grid(row=row, column=0, sticky="w", pady=3)
+        widget.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=3)
+        row += 1
+        if hint:
+            hint_lbl = ttk.Label(sec, text=hint, font=("", 8))
+            hint_lbl.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=(0, 3))
+            self._dim_labels.append(hint_lbl)
+            row += 1
+        return row
 
     # ── Windows Titelleiste Dark Mode ─────────────────────────────────────────
     def _set_titlebar_dark(self, dark):
@@ -443,13 +492,34 @@ class AssetEditorApp(tk.Tk):
         self._set_titlebar_dark(dark)
 
     # ── Eingaben ──────────────────────────────────────────────────────────────
-    def _description(self):
-        return build_description({name: var.get() for name, var in self.field_vars.items()})
+    def _values(self):
+        """Attribute aus den Eingabefeldern (ohne Acquisition time).
+        Ein RapidMapping Event wird dem Commentary vorangestellt:
+        "<Event>, <Commentary-Auswahl>"."""
+        values = {name: var.get() for name, var in self.field_vars.items()}
+        parts = [self.event_var.get().strip(), values["Commentary"].strip()]
+        values["Commentary"] = DESCRIPTION_SEPARATOR.join(p for p in parts if p)
+        return values
+
+    def _preview_description(self):
+        """Description, wie sie das erste Asset erhält (Acquisition time aus dessen Item-ID)."""
+        values = self._values()
+        try:
+            href = read_hrefs(self.href_text.get("1.0", "end"))[0]
+            _, item, _ = parse_asset_href(href, self.environment.get())
+            values[ACQUISITION_TIME_FIELD] = acquisition_time_from_item(item)
+        except (IndexError, ValueError):
+            values[ACQUISITION_TIME_FIELD] = ACQUISITION_TIME_PLACEHOLDER
+        return build_description(values)
 
     def _update_preview(self, *_):
+        # Wird auch aus dem Poll-Zyklus aufgerufen (hrefs, Umgebung): nur bei Änderung neu setzen
+        text = self._preview_description()
+        if text == self.preview_text.get("1.0", "end-1c"):
+            return
         self.preview_text.configure(state="normal")
         self.preview_text.delete("1.0", "end")
-        self.preview_text.insert("1.0", self._description())
+        self.preview_text.insert("1.0", text)
         self.preview_text.configure(state="disabled")
 
     def _load_href_file(self):
@@ -478,7 +548,8 @@ class AssetEditorApp(tk.Tk):
         Wird laufend über den Log-Poll-Zyklus neu ausgewertet - deckt damit
         alle Eingabewege ab (Tippen, Dropdown, TXT-Datei) ohne Einzel-Traces."""
         T = DARK if self._dark else LIGHT
-        ready = bool(read_hrefs(self.href_text.get("1.0", "end"))) and bool(self._description())
+        ready = (bool(read_hrefs(self.href_text.get("1.0", "end")))
+                 and bool(build_description(self._values())))
         color = T["ok"] if ready else T["hint"]
         state = "disabled" if self._running else "normal"
         self.write_btn.config(
@@ -490,13 +561,13 @@ class AssetEditorApp(tk.Tk):
     # ── Ablauf ────────────────────────────────────────────────────────────────
     def _start(self, dry_run):
         hrefs = read_hrefs(self.href_text.get("1.0", "end"))
-        description = self._description()
+        values = self._values()
         environment = self.environment.get()
 
         if not hrefs:
             messagebox.showwarning("Eingabe fehlt", "Bitte mindestens einen Asset-href angeben.")
             return
-        if not description:
+        if not build_description(values):
             messagebox.showwarning("Eingabe fehlt", "Bitte mindestens ein Attribut der Description ausfüllen.")
             return
 
@@ -504,7 +575,9 @@ class AssetEditorApp(tk.Tk):
         if not dry_run:
             question = (
                 f"{len(hrefs)} Asset(s) in {environment} ({STAC_HOSTNAMES[environment]}) "
-                f"erhalten diese Description:\n\n{description}\n\n"
+                f"erhalten diese Description (Beispiel erstes Asset):\n\n"
+                f"{self._preview_description()}\n\n"
+                "Die Acquisition time wird pro Asset aus der Item-ID gelesen.\n\n"
             )
             if overwrite:
                 question += "ACHTUNG: Bestehende Descriptions werden überschrieben.\n\n"
@@ -516,14 +589,14 @@ class AssetEditorApp(tk.Tk):
         self._update_button_state()
         threading.Thread(
             target=self._worker,
-            args=(hrefs, description, environment, overwrite, dry_run),
+            args=(hrefs, values, environment, overwrite, dry_run),
             daemon=True,
         ).start()
 
-    def _worker(self, hrefs, description, environment, overwrite, dry_run):
+    def _worker(self, hrefs, values, environment, overwrite, dry_run):
         """Läuft im Hintergrund-Thread, damit das Fenster bedienbar bleibt."""
         try:
-            update_asset_descriptions(hrefs, description, environment, overwrite, dry_run)
+            update_asset_descriptions(hrefs, values, environment, overwrite, dry_run)
         except Exception as e:
             logger.error(f"ABBRUCH: {e}")
         finally:
@@ -542,6 +615,7 @@ class AssetEditorApp(tk.Tk):
             else:
                 self._log(record)
         self._update_button_state()
+        self._update_preview()   # hrefs und Umgebung haben keinen Trace
         self.after(120, self._poll_queue)
 
     def _log(self, record):
