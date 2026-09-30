@@ -11,6 +11,9 @@ cmd
 >python GUI_stac_assetDescription_editor.py
 ```
 
+<img width="943" height="1024" alt="image" src="https://github.com/user-attachments/assets/a0c23a55-5431-448d-abc4-f976d5a80713" />
+
+
 Beim ersten Start installiert das GUI die fehlenden Python-Pakete (`requests`, `urllib3`) selbst;
 dafür braucht es einmalig eine Internetverbindung. Klappt das nicht (z.B. wegen eines Proxys),
 zeigt das GUI den Befehl für die Installation von Hand an:
