@@ -1,0 +1,11 @@
+# Läuft ab Python 3.6. Bewusst ohne Versionsangabe: pip installiert unter
+# Python 3.6 automatisch die letzten dafür freigegebenen Versionen.
+#
+# Das GUI installiert fehlende Pakete beim Start automatisch aus dieser Datei.
+# Neue Pakete auch in REQUIRED_MODULES (GUI_stac_assetDescription_editor.py) eintragen.
+requests
+urllib3
+
+# Kerberos proxy authentication (optional — nur nötig bei Corporate-Proxies
+# die Windows AD / Kerberos verlangen, z.B. 407 Negotiate).
+# pyspnego
