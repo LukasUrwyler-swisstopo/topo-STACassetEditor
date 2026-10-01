@@ -22,6 +22,7 @@ REQUEST_TIMEOUT = 30  # Sekunden
 DESCRIPTION_FIELDS = [
     ("Area", []),
     # TerrainModel und CameraSystem wie TERRAIN_MODELS / CAMERA_SYSTEMS in ../topo-GDWHimport
+    # (Ausnahme: "Spiegelreflexkamera (Handkamera)" gibt es nur hier)
     ("TerrainModel", [
         "Digital Surface Model (DSM photogrammetric autocorrelation)",
         "swissALTI3D",
@@ -33,6 +34,7 @@ DESCRIPTION_FIELDS = [
         "Leica ADS100",
         "Leica ADS80",
         "Leica DMC-4",
+        "Spiegelreflexkamera (Handkamera)",
     ]),
     ("Acquisition time", []),
     ("LineID", []),
