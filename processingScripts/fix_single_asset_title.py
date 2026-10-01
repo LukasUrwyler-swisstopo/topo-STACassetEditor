@@ -10,7 +10,7 @@ Ablauf:
     2. DRY_RUN = False -> schreibt nach Bestätigung mit "ja"
     Zuerst auf INT testen, erst danach ENVIRONMENT/HREF auf PROD umstellen.
 
-Start (aus dem Projektverzeichnis):
+Start (aus dem Projektverzeichnis): 
     python processingScripts/fix_single_asset_title.py
 """
 
@@ -33,9 +33,9 @@ HREF = (
     "https://sys-data.int.bgdi.ch/ch.swisstopo.spezialbefliegungen/"
     "ram-2026-08-19t12595900/ram-2026-08-19t12595900-qdop-rgb-mosaic.tif"
 )
-NEW_TITLE = "QDOP-NRG-MOSAIC"
-NEW_COMMENTARY = "Trockenheit 2026 - Testflug, Quick Digital OrthoPhoto - NRG 8BIT - rapidData"
-DRY_RUN = False  # True = nur prüfen, False = schreiben
+NEW_TITLE = "DOP-NRG-MOSAIC"
+NEW_COMMENTARY = "Rapid Mapping ForestFire 2023, Digital OrthoPhoto - Mosaic NRG 8BIT"
+DRY_RUN = True  # True = nur prüfen, False = schreiben
 # ---------------------------------------------------------------------------
 
 # Commentary ist laut Format immer das letzte Attribut der Description.
