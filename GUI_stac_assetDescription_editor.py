@@ -105,6 +105,7 @@ ensure_requirements()
 
 from configuration import (
     ACQUISITION_TIME_FIELD,
+    CAMERA_COMMENTARY_PAIRS,
     DEFAULT_ENVIRONMENT,
     DESCRIPTION_FIELDS,
     DESCRIPTION_SEPARATOR,
@@ -289,6 +290,10 @@ class AssetEditorApp(tk.Tk):
                 self._comboboxes.append(widget)
             else:
                 widget = ttk.Entry(sec, textvariable=self.field_vars[name])
+            if name in ("CameraSystem", "Commentary"):
+                # Nur Auswahl im Dropdown löst die Kopplung aus, nicht .set() -> keine Schleife
+                widget.bind("<<ComboboxSelected>>",
+                            lambda _e, n=name: self._sync_camera_commentary(n))
             hint = ""
             if name == "LineID":
                 hint = "mehrere LineIDs mit Komma und Leerzeichen trennen, z.B. 12345, 12346"
@@ -492,6 +497,16 @@ class AssetEditorApp(tk.Tk):
         self._set_titlebar_dark(dark)
 
     # ── Eingaben ──────────────────────────────────────────────────────────────
+    def _sync_camera_commentary(self, changed):
+        """Setzt nach einer Auswahl in CameraSystem bzw. Commentary das passende
+        Gegenstück (CAMERA_COMMENTARY_PAIRS). Andere Werte ändern nichts."""
+        value = self.field_vars[changed].get()
+        for camera, commentary in CAMERA_COMMENTARY_PAIRS:
+            if changed == "CameraSystem" and value == camera:
+                self.field_vars["Commentary"].set(commentary)
+            elif changed == "Commentary" and value == commentary:
+                self.field_vars["CameraSystem"].set(camera)
+
     def _values(self):
         """Attribute aus den Eingabefeldern (ohne Acquisition time).
         Ein RapidMapping Event wird dem Commentary vorangestellt:

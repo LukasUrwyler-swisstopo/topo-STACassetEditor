@@ -22,7 +22,7 @@ REQUEST_TIMEOUT = 30  # Sekunden
 DESCRIPTION_FIELDS = [
     ("Area", []),
     # TerrainModel und CameraSystem wie TERRAIN_MODELS / CAMERA_SYSTEMS in ../topo-GDWHimport
-    # (Ausnahme: "Spiegelreflexkamera (Handkamera)" gibt es nur hier)
+    # (Ausnahme: "Spiegelreflexkamera (Handkamera)" und "Helikopter mit RIEGL-Kamera" gibt es nur hier)
     ("TerrainModel", [
         "Digital Surface Model (DSM photogrammetric autocorrelation)",
         "swissALTI3D",
@@ -35,6 +35,7 @@ DESCRIPTION_FIELDS = [
         "Leica ADS80",
         "Leica DMC-4",
         "Spiegelreflexkamera (Handkamera)",
+        "Helikopter mit RIEGL-Kamera",
     ]),
     ("Acquisition time", []),
     ("LineID", []),
@@ -52,6 +53,14 @@ DESCRIPTION_FIELDS = [
     ]),
 ]
 DESCRIPTION_SEPARATOR = ", "
+
+# Kopplung im GUI in beide Richtungen: wird im Dropdown CameraSystem die Kamera
+# gewählt, setzt das GUI das Commentary, und umgekehrt. Texte müssen exakt den
+# Vorschlägen in DESCRIPTION_FIELDS entsprechen.
+CAMERA_COMMENTARY_PAIRS = [
+    ("Spiegelreflexkamera (Handkamera)", 'Einzelbild Oblique - rapidData "ebo"'),
+    ("Helikopter mit RIEGL-Kamera", 'Einzelbild Nadir - rapidData "ebn"'),
+]
 
 # Vorbelegung im GUI (Feld bleibt editierbar)
 FIELD_DEFAULTS = {
