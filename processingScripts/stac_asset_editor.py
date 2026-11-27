@@ -63,6 +63,69 @@ def build_description(values: dict) -> str:
     return DESCRIPTION_SEPARATOR.join(parts)
 
 
+def replace_attributes(description: str, values: dict) -> tuple:
+    """
+    Ersetzt in einer bestehenden Description nur die Werte der ausgefüllten
+    Attribute; alles andere bleibt Zeichen für Zeichen gleich.
+
+    Attributnamen werden ohne Rücksicht auf Gross-/Kleinschreibung gefunden und
+    behalten ihre Schreibweise im Original ("LineId" bleibt "LineId"). Ein Wert
+    endet dort, wo das nächste bekannte Attribut beginnt; Werte dürfen also selbst
+    ", " enthalten (z.B. mehrere Zeiten oder LineIDs).
+
+    Args:
+        description (str): bestehende Description
+        values (dict): Attributname -> neuer Wert (leere Werte bleiben unverändert)
+
+    Returns:
+        tuple: (neue_description, liste_der_nicht_gefundenen_attribute)
+
+    Raises:
+        ValueError: Wenn ein Attribut mehrfach vorkommt oder sein Ende unklar ist
+    """
+    # Beginn aller bekannten Attribute: (Position Name, Position Wert, Name)
+    starts = []
+    for name, _ in DESCRIPTION_FIELDS:
+        pattern = "(?:^|{})({}: )".format(re.escape(DESCRIPTION_SEPARATOR), re.escape(name))
+        for match in re.finditer(pattern, description, re.IGNORECASE):
+            starts.append((match.start(1), match.end(1), name))
+
+    replacements = []
+    missing = []
+    for name, _ in DESCRIPTION_FIELDS:
+        new_value = (values.get(name) or "").strip()
+        if not new_value:
+            continue
+        found = [s for s in starts if s[2] == name]
+        if not found:
+            missing.append(name)
+            continue
+        if len(found) > 1:
+            raise ValueError(
+                f"Attribut '{name}' kommt {len(found)}x in der Description vor (erwartet: 1x). "
+                f"Description von Hand prüfen, es wird nichts geschrieben."
+            )
+        value_start = found[0][1]
+        # Ende des Werts: Beginn des nächsten bekannten Attributs, sonst Ende der Description
+        later = [s[0] for s in starts if s[0] > value_start]
+        value_end = min(later) - len(DESCRIPTION_SEPARATOR) if later else len(description)
+        old_value = description[value_start:value_end]
+        # ": " im alten Wert deutet auf ein unbekanntes Attribut hin, das sonst mit ersetzt würde
+        if ": " in old_value:
+            raise ValueError(
+                f"Ende von '{name}' ist unklar, der Wert enthält ': ' ({old_value}). "
+                f"Möglicherweise folgt ein unbekanntes Attribut. "
+                f"Description von Hand prüfen, es wird nichts geschrieben."
+            )
+        replacements.append((value_start, value_end, new_value))
+
+    # Von hinten nach vorne ersetzen, damit die Positionen davor gültig bleiben
+    new_description = description
+    for value_start, value_end, new_value in sorted(replacements, reverse=True):
+        new_description = new_description[:value_start] + new_value + new_description[value_end:]
+    return new_description, missing
+
+
 def acquisition_time_from_item(item: str) -> str:
     """
     Liest die Acquisition time (UTC) aus der Item-ID.
@@ -143,25 +206,29 @@ def get_asset_api_url(environment: str, collection: str, item: str, asset: str) 
     )
 
 
-def update_one_asset(session, href, values, environment, overwrite, dry_run, auth) -> tuple:
+def update_one_asset(session, href, values, environment, overwrite, dry_run, auth,
+                     replace_only=False) -> tuple:
     """
     Prüft ein Asset und schreibt die Description (ausser bei dry_run).
 
     Die Description wird pro Asset gebildet, weil die Acquisition time aus der
     Item-ID stammt; alle übrigen Attribute sind für alle Assets gleich.
+    Mit replace_only werden in der bestehenden Description nur die ausgefüllten
+    Attribute ersetzt; die Acquisition time bleibt dann unverändert.
 
     Returns:
         tuple: (status, meldung) mit status = "SUCCESS" | "WARNING" | "ERROR"
 
     Raises:
-        ValueError: Ungültiger href
+        ValueError: Ungültiger href oder unklare bestehende Description
         PermissionError: Anmeldung vom Server abgelehnt (betrifft alle Assets)
         requests.RequestException: Netzwerkfehler
     """
     collection, item, asset = parse_asset_href(href, environment)
-    values = dict(values)
-    values[ACQUISITION_TIME_FIELD] = acquisition_time_from_item(item)
-    description = build_description(values)
+    if not replace_only:
+        values = dict(values)
+        values[ACQUISITION_TIME_FIELD] = acquisition_time_from_item(item)
+        description = build_description(values)
     url = get_asset_api_url(environment, collection, item, asset)
 
     # Aktuellen Stand lesen: existiert das Asset, hat es schon eine Description?
@@ -175,14 +242,33 @@ def update_one_asset(session, href, values, environment, overwrite, dry_run, aut
     except ValueError:
         return "ERROR", "Unerwartete Antwort vom Server (kein JSON). Verbindung/Proxy prüfen."
 
+    if replace_only:
+        if not existing:
+            return "WARNING", (
+                "Übersprungen, Asset hat noch keine Description. Zum Ergänzen den Haken "
+                "«Nur ausgefüllte Attribute ersetzen» entfernen."
+            )
+        description, missing = replace_attributes(existing, values)
+        if missing:
+            return "WARNING", (
+                f"Übersprungen, Attribut(e) nicht in der Description vorhanden: "
+                f"{', '.join(missing)}. Bestehende Description: {existing}"
+            )
+
     if existing == description:
         return "SUCCESS", f"Description ist bereits identisch vorhanden, nichts zu ändern: {description}"
-    if existing and not overwrite:
+    if existing and not overwrite and not replace_only:
         return "WARNING", f"Übersprungen, Asset hat bereits eine Description: {existing}"
 
-    action = "überschrieben" if existing else "ergänzt"
+    if replace_only:
+        # Vorher/Nachher im Log, damit eine Änderung nachvollziehbar und rückgängig zu machen ist
+        action = "geändert"
+        description_log = f"\n      vorher:  {existing}\n      nachher: {description}"
+    else:
+        action = "überschrieben" if existing else "ergänzt"
+        description_log = f": {description}"
     if dry_run:
-        return "SUCCESS", f"Prüfung OK, Description würde {action}: {description}"
+        return "SUCCESS", f"Prüfung OK, Description würde {action}{description_log}"
 
     # PATCH ändert nur das gesendete Feld. Kein PUT verwenden: PUT löscht alle
     # optionalen Felder, die nicht im Payload stehen.
@@ -205,7 +291,7 @@ def update_one_asset(session, href, values, environment, overwrite, dry_run, aut
     if written != description:
         return "ERROR", "Server hat die Description nicht wie gesendet übernommen. Asset im STAC prüfen."
 
-    return "SUCCESS", f"Description {action}: {description}"
+    return "SUCCESS", f"Description {action}{description_log}"
 
 
 def update_asset_descriptions(
@@ -213,7 +299,8 @@ def update_asset_descriptions(
     values: dict,
     environment: str = DEFAULT_ENVIRONMENT,
     overwrite: bool = False,
-    dry_run: bool = True
+    dry_run: bool = True,
+    replace_only: bool = False
 ) -> dict:
     """
     Schreibt die Description in alle angegebenen Assets.
@@ -227,6 +314,8 @@ def update_asset_descriptions(
         environment (str): "INT" oder "PROD" (default: "INT")
         overwrite (bool): Bestehende Descriptions überschreiben (default: False)
         dry_run (bool): Nur prüfen, nichts schreiben (default: True)
+        replace_only (bool): Nur die ausgefüllten Attribute in der bestehenden
+            Description ersetzen, Rest bleibt; overwrite gilt dann nicht (default: False)
 
     Returns:
         dict: Anzahl pro Status, z.B. {"SUCCESS": 3, "WARNING": 1, "ERROR": 0}
@@ -257,9 +346,12 @@ def update_asset_descriptions(
     mode = "PRÜFUNG (es wird nichts geschrieben)" if dry_run else "SCHREIBEN"
     logger.info("=" * 70)
     logger.info(f"{mode} | Umgebung {environment} ({STAC_HOSTNAMES[environment]}) | {total} Asset(s)")
-    template = dict(values)
-    template[ACQUISITION_TIME_FIELD] = ACQUISITION_TIME_PLACEHOLDER
-    logger.info(f"Description: {build_description(template)}")
+    if replace_only:
+        logger.info(f"Nur diese Attribute ersetzen (Rest bleibt): {build_description(values)}")
+    else:
+        template = dict(values)
+        template[ACQUISITION_TIME_FIELD] = ACQUISITION_TIME_PLACEHOLDER
+        logger.info(f"Description: {build_description(template)}")
     logger.info("=" * 70)
 
     counts = {"SUCCESS": 0, "WARNING": 0, "ERROR": 0}
@@ -268,7 +360,7 @@ def update_asset_descriptions(
         aborted = False
         try:
             status, message = update_one_asset(
-                session, href, values, environment, overwrite, dry_run, auth
+                session, href, values, environment, overwrite, dry_run, auth, replace_only
             )
         except ValueError as e:
             status, message = "ERROR", str(e)

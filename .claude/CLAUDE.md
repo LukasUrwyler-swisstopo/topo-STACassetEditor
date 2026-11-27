@@ -9,6 +9,8 @@ The tool adds a missing `description` to existing STAC assets (collection
 file with one href per line) and fills one input field per description attribute; all listed
 assets receive the same attributes, except `Acquisition time`, which is read per asset from its
 item ID (`ram-2022-07-16t10080000` -> `2022-07-16T10:08:00.00`, UTC, no conversion).
+With «Nur ausgefüllte Attribute ersetzen» (`replace_only`) the tool instead corrects single
+attributes of an existing description (`replace_attributes`); see Critical domain logic.
 
 Users are geospatial specialists, not professional programmers. Maintainability and readability
 take priority over elegance. Sister project: `../topo-rapidmapping` (publishes assets to the same
@@ -95,6 +97,13 @@ reached by the ttk style and must be coloured in `_apply_theme`. Use `ttk.Scroll
   otherwise the asset is rejected. Never make PROD the default by accident.
 - **No silent overwrite**: an asset that already has a description is skipped (WARNING) unless
   the user ticks the overwrite option. Writing always requires a confirmation dialog.
+- **Replace mode** (`replace_only`): only the values of filled attributes are replaced, the rest
+  stays byte-identical, including Acquisition time (mosaics carry several times; never re-derive
+  it from the item ID here). Attribute names are matched case-insensitively and keep their
+  original spelling (older PROD assets use `LineId`, not `LineID`). A value ends where the next
+  known attribute begins. Missing attribute -> WARNING; duplicate attribute or `": "` inside the
+  old value (unknown attribute) -> ERROR, nothing written. `overwrite` does not apply in this
+  mode; the confirmation dialog still does. The log shows the description before and after.
 - **Exact text**: the description is written exactly as shown in the preview. Do not normalise,
   reformat or "correct" user input beyond trimming leading/trailing whitespace per attribute.
 - **Credentials**: never commit, log, or include in error messages.

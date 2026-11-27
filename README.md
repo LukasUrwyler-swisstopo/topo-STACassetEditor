@@ -37,8 +37,29 @@ Voraussetzung: `secrets/stac_credentials.json` (Format wie in topo-rapidmapping,
    mit `, ` trennen. Ein **RapidMapping Event** wird dem Commentary vorangestellt, z.B.
    `Commentary: RapidMapping Trockenheit Wallis 2026, Quick Digital OrthoPhoto - RGB 8BIT - rapidData`.
    Die Vorschau zeigt den Text genau so, wie ihn das erste Asset erhält.
-4. **Prüfen (nichts schreiben)**: zeigt pro Asset, was geschehen würde. Braucht kein Login.
-5. **Description schreiben**: schreibt nach Rückfrage.
+4. **Optionen** (über der Vorschau):
+   - **Nur ausgefüllte Attribute ersetzen (Rest der Description bleibt)**: korrigiert einzelne
+     Attribute einer bestehenden Description, siehe unten.
+   - **Bestehende Description überschreiben**: ersetzt eine vorhandene Description vollständig.
+     Ohne Haken wird ein Asset mit Description übersprungen. Beim Ersetzen einzelner Attribute
+     ist die Option ausgegraut, weil dort das Ändern gewollt ist.
+5. **Prüfen (nichts schreiben)**: zeigt pro Asset, was geschehen würde. Braucht kein Login.
+6. **Description schreiben**: schreibt nach Rückfrage.
+
+### Einzelne Attribute korrigieren
+
+Beispiel: `TerrainModel: Digital Surface Model (...)` soll `TerrainModel: swissALTI3D` werden.
+Haken bei «Nur ausgefüllte Attribute ersetzen» setzen, nur TerrainModel ausfüllen, «Prüfen».
+
+- Nur die Werte der ausgefüllten Felder werden ersetzt; alles andere bleibt Zeichen für Zeichen
+  gleich, auch die Acquisition time (z.B. mehrere Zeiten bei Mosaiken).
+- Attributnamen behalten ihre Schreibweise im Original (`LineId` bleibt `LineId`).
+- Das vorbelegte SourceReferenceSystem wird beim Setzen des Hakens geleert, damit es nicht
+  ungewollt mitgeschrieben wird (beim Entfernen des Hakens kommt es zurück).
+- «Prüfen» und das Log zeigen pro Asset die Description vorher und nachher.
+- Fehlt ein ausgefülltes Attribut in der bestehenden Description, wird das Asset übersprungen
+  (WARNING). Kommt es mehrfach vor oder ist sein Ende unklar (unbekanntes Attribut), endet das
+  Asset mit ERROR; dann die Description von Hand prüfen.
 
 Format der TXT-Datei: eine URL pro Zeile; leere Zeilen und Zeilen mit `#` werden ignoriert.
 
@@ -51,9 +72,9 @@ https://data.geo.admin.ch/ch.swisstopo.spezialbefliegungen/ram-2024-06-28t073000
 
 | Status  | Bedeutung |
 |---------|-----------|
-| SUCCESS | Description ergänzt (oder bereits identisch vorhanden) |
-| WARNING | Übersprungen: Asset hat bereits eine andere Description. Nur mit «Bestehende Description überschreiben» wird sie ersetzt. |
-| ERROR   | href ungültig, falsche Umgebung, Asset nicht gefunden oder Schreiben fehlgeschlagen |
+| SUCCESS | Description ergänzt bzw. geändert (oder bereits identisch vorhanden) |
+| WARNING | Übersprungen: Asset hat bereits eine andere Description. Nur mit «Bestehende Description überschreiben» wird sie ersetzt. Beim Ersetzen einzelner Attribute: Attribut oder Description fehlt. |
+| ERROR   | href ungültig, falsche Umgebung, Asset nicht gefunden, Attribut mehrfach/unklar oder Schreiben fehlgeschlagen |
 
 Jeder Lauf wird in `logs/stac_asset_editor_<Datum>.log` protokolliert.
 

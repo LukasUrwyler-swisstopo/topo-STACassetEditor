@@ -174,6 +174,16 @@ DARK = {
 # Der Log-Bereich ist in beiden Themes dunkel, darum immer die hellen Farben
 LOG_COLORS = {"SUCCESS": DARK["ok"], "WARNING": DARK["hint"], "ERROR": DARK["err"]}
 
+# Texte, die mit «Nur ausgefüllte Attribute ersetzen» wechseln
+PREVIEW_TITLE_FULL = "Vorschau der Description (erstes Asset)"
+PREVIEW_TITLE_REPLACE = "Vorschau: nur diese Attribute werden ersetzt (Rest der Description bleibt)"
+FIELD_HINT_FULL = "leere Felder erscheinen nicht in der Description"
+FIELD_HINT_REPLACE = ("leere Felder bleiben unverändert, Attributnamen behalten ihre "
+                      "Schreibweise (z.B. LineId)")
+ACQ_HINT_FULL = ("wird pro Asset aus der Item-ID gelesen (UTC), z.B. "
+                 "ram-2022-07-16t10080000 → 2022-07-16T10:08:00.00")
+ACQ_HINT_REPLACE = "bleibt unverändert wie in der bestehenden Description"
+
 
 class AssetEditorApp(tk.Tk):
     """Hauptfenster des STAC Asset Editors."""
@@ -181,7 +191,7 @@ class AssetEditorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("STAC Asset Editor")
-        win_h = min(940, self.winfo_screenheight() - 80)
+        win_h = min(1000, self.winfo_screenheight() - 80)
         self.geometry(f"860x{win_h}")
         self.minsize(720, min(700, win_h))
         self.resizable(True, True)
@@ -193,6 +203,7 @@ class AssetEditorApp(tk.Tk):
         self.log_queue    = queue.Queue()
         self.environment  = tk.StringVar(value=DEFAULT_ENVIRONMENT)
         self.overwrite    = tk.BooleanVar(value=False)
+        self.replace_only = tk.BooleanVar(value=False)
         # Acquisition time hat kein Eingabefeld, sie kommt pro Asset aus der Item-ID
         self.field_vars   = {name: tk.StringVar(value=FIELD_DEFAULTS.get(name, ""))
                              for name, _ in DESCRIPTION_FIELDS
@@ -276,9 +287,8 @@ class AssetEditorApp(tk.Tk):
                                           "RapidMapping Trockenheit Wallis 2026")
                 self.event_var.trace_add("write", self._update_preview)
             if name == ACQUISITION_TIME_FIELD:
-                widget = ttk.Label(sec, font=("Segoe UI", 8, "italic"),
-                                   text="wird pro Asset aus der Item-ID gelesen (UTC), z.B. "
-                                        "ram-2022-07-16t10080000 → 2022-07-16T10:08:00.00")
+                widget = ttk.Label(sec, font=("Segoe UI", 8, "italic"), text=ACQ_HINT_FULL)
+                self._acq_hint = widget
                 self._dim_labels.append(widget)
             elif name == "Commentary":
                 # Nur Auswahl aus der Liste; leerer Eintrag zuoberst zum Abwählen
@@ -300,17 +310,26 @@ class AssetEditorApp(tk.Tk):
             row = self._add_field_row(sec, row, name, widget, hint)
             if name in self.field_vars:
                 self.field_vars[name].trace_add("write", self._update_preview)
-        field_hint = ttk.Label(sec, text="leere Felder erscheinen nicht in der Description",
-                               font=("", 8))
-        field_hint.grid(row=row, column=1, sticky="w", padx=(8, 0))
-        self._dim_labels.append(field_hint)
+        self._field_hint = ttk.Label(sec, text=FIELD_HINT_FULL, font=("", 8))
+        self._field_hint.grid(row=row, column=1, sticky="w", padx=(8, 0))
+        self._dim_labels.append(self._field_hint)
+
+        # Optionen (gut sichtbar vor der Vorschau, weil sie bestimmen, was geschrieben wird).
+        # Eine Zeile, damit der Log-Bereich auch auf kleineren Bildschirmen Platz behält.
+        opt = ttk.LabelFrame(self, text="Optionen", padding=8, style="Section.TLabelframe")
+        opt.pack(fill="x", padx=12, pady=(8, 0))
+        ttk.Checkbutton(opt, text="Nur ausgefüllte Attribute ersetzen (Rest der Description bleibt)",
+                        variable=self.replace_only, style="Option.TCheckbutton",
+                        command=self._on_mode_change).pack(side="left")
+        self.overwrite_cb = ttk.Checkbutton(opt, text="Bestehende Description überschreiben",
+                                            variable=self.overwrite, style="Option.TCheckbutton")
+        self.overwrite_cb.pack(side="left", padx=(30, 0))
 
         # Vorschau
-        preview_frame = ttk.LabelFrame(self, text="Vorschau der Description (erstes Asset)",
-                                       padding=8,
-                                       style="Section.TLabelframe")
-        preview_frame.pack(fill="x", padx=12, pady=(8, 0))
-        self.preview_text = tk.Text(preview_frame, height=3, wrap="word", state="disabled",
+        self._preview_frame = ttk.LabelFrame(self, text=PREVIEW_TITLE_FULL, padding=8,
+                                             style="Section.TLabelframe")
+        self._preview_frame.pack(fill="x", padx=12, pady=(8, 0))
+        self.preview_text = tk.Text(self._preview_frame, height=3, wrap="word", state="disabled",
                                     font=("Segoe UI", 9), relief="flat", borderwidth=1,
                                     highlightthickness=1)
         self.preview_text.pack(fill="x")
@@ -332,8 +351,6 @@ class AssetEditorApp(tk.Tk):
         self.check_btn.pack(side="right", padx=(0, 10))
         ttk.Button(self._btn_row, text="Log löschen",
                    command=self._clear_log).pack(side="right", padx=(0, 10))
-        ttk.Checkbutton(self._btn_row, text="Bestehende Description überschreiben",
-                        variable=self.overwrite).pack(side="left")
 
         # Log
         self._log_frame = ttk.LabelFrame(self, text="Log-Ausgabe", padding=4,
@@ -425,7 +442,9 @@ class AssetEditorApp(tk.Tk):
         s.configure("TCheckbutton",
             background=T["panel"], foreground=T["fg"], focuscolor=T["panel"])
         s.map("TCheckbutton",
-            background=[("active", T["panel"])], foreground=[("active", T["fg"])])
+            background=[("active", T["panel"])],
+            foreground=[("disabled", T["fg_dim"]), ("active", T["fg"])])
+        s.configure("Option.TCheckbutton", font=("Segoe UI", 9, "bold"))
         s.configure("TCombobox",
             fieldbackground=T["input"], background=T["btn"],
             foreground=T["fg"], arrowcolor=T["fg"],
@@ -497,6 +516,26 @@ class AssetEditorApp(tk.Tk):
         self._set_titlebar_dark(dark)
 
     # ── Eingaben ──────────────────────────────────────────────────────────────
+    def _on_mode_change(self):
+        """Umschalten zwischen ganzer Description und «Nur ausgefüllte Attribute ersetzen»."""
+        replace_only = self.replace_only.get()
+        # Vorbelegte Felder (SourceReferenceSystem) würden beim Ersetzen ungewollt
+        # mitgeschrieben: leeren, solange sie unverändert sind; zurück beim Ausschalten
+        for name, default in FIELD_DEFAULTS.items():
+            var = self.field_vars[name]
+            if replace_only and var.get() == default:
+                var.set("")
+            elif not replace_only and not var.get().strip():
+                var.set(default)
+        # Beim Ersetzen ist das Ändern der bestehenden Description gewollt,
+        # «überschreiben» gilt nur für die ganze Description
+        self.overwrite_cb.state(["disabled"] if replace_only else ["!disabled"])
+        self._preview_frame.configure(
+            text=PREVIEW_TITLE_REPLACE if replace_only else PREVIEW_TITLE_FULL)
+        self._field_hint.configure(text=FIELD_HINT_REPLACE if replace_only else FIELD_HINT_FULL)
+        self._acq_hint.configure(text=ACQ_HINT_REPLACE if replace_only else ACQ_HINT_FULL)
+        self._update_preview()
+
     def _sync_camera_commentary(self, changed):
         """Setzt nach einer Auswahl in CameraSystem bzw. Commentary das passende
         Gegenstück (CAMERA_COMMENTARY_PAIRS). Andere Werte ändern nichts."""
@@ -517,8 +556,11 @@ class AssetEditorApp(tk.Tk):
         return values
 
     def _preview_description(self):
-        """Description, wie sie das erste Asset erhält (Acquisition time aus dessen Item-ID)."""
+        """Description, wie sie das erste Asset erhält (Acquisition time aus dessen Item-ID).
+        Beim Ersetzen: nur die Attribute, die ersetzt werden."""
         values = self._values()
+        if self.replace_only.get():
+            return build_description(values)
         try:
             href = read_hrefs(self.href_text.get("1.0", "end"))[0]
             _, item, _ = parse_asset_href(href, self.environment.get())
@@ -587,15 +629,25 @@ class AssetEditorApp(tk.Tk):
             return
 
         overwrite = self.overwrite.get()
+        replace_only = self.replace_only.get()
         if not dry_run:
-            question = (
-                f"{len(hrefs)} Asset(s) in {environment} ({STAC_HOSTNAMES[environment]}) "
-                f"erhalten diese Description (Beispiel erstes Asset):\n\n"
-                f"{self._preview_description()}\n\n"
-                "Die Acquisition time wird pro Asset aus der Item-ID gelesen.\n\n"
-            )
-            if overwrite:
-                question += "ACHTUNG: Bestehende Descriptions werden überschrieben.\n\n"
+            if replace_only:
+                question = (
+                    f"{len(hrefs)} Asset(s) in {environment} ({STAC_HOSTNAMES[environment]}): "
+                    f"in der bestehenden Description werden nur diese Attribute ersetzt:\n\n"
+                    f"{self._preview_description()}\n\n"
+                    "Alle übrigen Attribute bleiben unverändert. Assets, in denen ein "
+                    "Attribut fehlt, werden übersprungen.\n\n"
+                )
+            else:
+                question = (
+                    f"{len(hrefs)} Asset(s) in {environment} ({STAC_HOSTNAMES[environment]}) "
+                    f"erhalten diese Description (Beispiel erstes Asset):\n\n"
+                    f"{self._preview_description()}\n\n"
+                    "Die Acquisition time wird pro Asset aus der Item-ID gelesen.\n\n"
+                )
+                if overwrite:
+                    question += "ACHTUNG: Bestehende Descriptions werden überschrieben.\n\n"
             question += "Jetzt schreiben?"
             if not messagebox.askyesno("Description schreiben", question, icon="warning"):
                 return
@@ -604,14 +656,15 @@ class AssetEditorApp(tk.Tk):
         self._update_button_state()
         threading.Thread(
             target=self._worker,
-            args=(hrefs, values, environment, overwrite, dry_run),
+            args=(hrefs, values, environment, overwrite, dry_run, replace_only),
             daemon=True,
         ).start()
 
-    def _worker(self, hrefs, values, environment, overwrite, dry_run):
+    def _worker(self, hrefs, values, environment, overwrite, dry_run, replace_only):
         """Läuft im Hintergrund-Thread, damit das Fenster bedienbar bleibt."""
         try:
-            update_asset_descriptions(hrefs, values, environment, overwrite, dry_run)
+            update_asset_descriptions(hrefs, values, environment, overwrite, dry_run,
+                                      replace_only)
         except Exception as e:
             logger.error(f"ABBRUCH: {e}")
         finally:
